@@ -283,7 +283,7 @@ class TreeRoutingTable(RoutingTable):
                 canGoHigher = bucketIndex + (i + 1) < len(self.buckets)
             i += 1
 
-        self.log.debug('Closest Nodes: %s' % closestNodes)
+        self.log.debug('Closest Nodes: %s', closestNodes)
         return closestNodes
 
     def getContact(self, node_id):
@@ -327,7 +327,7 @@ class TreeRoutingTable(RoutingTable):
         try:
             self.buckets[bucketIndex].removeContact(node_id)
         except ValueError:
-            self.log.error("Attempted to remove absent contact %s." % node_id)
+            self.log.error("Attempted to remove absent contact %s.", node_id)
 
     def touchKBucket(self, node_id, timestamp=None):
         """
@@ -389,7 +389,8 @@ class TreeRoutingTable(RoutingTable):
         """
         # Halve the range of the current (old) k-bucket.
         oldBucket = self.buckets[old_bucket_index]
-        splitPoint = oldBucket.rangeMax - (oldBucket.rangeMax - oldBucket.rangeMin) / 2
+        splitPoint = (oldBucket.rangeMax -
+                      (oldBucket.rangeMax - oldBucket.rangeMin) // 2)
         # Create a new k-bucket to cover the range split off from the old one.
         newBucket = kbucket.KBucket(
             splitPoint, oldBucket.rangeMax, self.market_id
@@ -493,7 +494,8 @@ class OptimizedTreeRoutingTable(TreeRoutingTable):
                 except kbucket.BucketFull:
                     # The bucket is full; see if it can be split (by checking
                     # if its range includes the host node's id)
-                    if self.buckets[bucketIndex].keyInRange(self.parent_node_id):
+                    if self.buckets[bucketIndex].keyInRange(
+                       self.parent_node_id):
                         self.splitBucket(bucketIndex)
                         # Retry the insertion attempt
                         self.addContact(contact)
@@ -528,7 +530,7 @@ class OptimizedTreeRoutingTable(TreeRoutingTable):
         try:
             self.buckets[bucket_index].removeContact(node_id)
         except ValueError:
-            self.log.error("Attempted to remove absent contact %s." % node_id)
+            self.log.error("Attempted to remove absent contact %s.", node_id)
         else:
             # Replace this stale contact with one from our replacement
             # cache, if available.
@@ -543,6 +545,4 @@ class OptimizedTreeRoutingTable(TreeRoutingTable):
             else:
                 self.buckets[bucket_index].addContact(cached)
         finally:
-            self.log.debug(
-                'Contacts: %s' % self.buckets[bucket_index].contacts
-            )
+            self.log.debug('Contacts: %s', self.buckets[bucket_index].contacts)

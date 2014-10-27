@@ -13,11 +13,11 @@ from StringIO import StringIO
 from threading import Thread
 import traceback
 
-from pybitcointools.main import privkey_to_pubkey
+from bitcoin.main import privkey_to_pubkey
 import tornado
 
 import constants
-from crypto_util import makePrivCryptor
+from crypto_util import Cryptor
 from data_uri import DataURI
 from orders import Orders
 from protocol import proto_page, query_page
@@ -48,8 +48,8 @@ class Market(object):
 
         # Current
         self.transport = transport
-        self.dht = transport.get_dht()
-        self.market_id = transport.get_market_id()
+        self.dht = transport.dht
+        self.market_id = transport.market_id
         self.peers = self.dht.getActivePeers()
         self.db = db
         self.orders = Orders(transport, self.market_id, db)
@@ -96,8 +96,8 @@ class Market(object):
         """This just flags the welcome screen to not show on startup"""
         self.db.updateEntries(
             "settings",
-            {'market_id': self.transport.market_id},
-            {"welcome": "disable"}
+            {"welcome": "disable"},
+            {'market_id': self.transport.market_id}
         )
 
     def private_key(self):
@@ -212,7 +212,6 @@ class Market(object):
         if 'item_images' in msg['Contract']:
             if 'image1' in msg['Contract']['item_images']:
                 img = msg['Contract']['item_images']['image1']
-                self.log.debug("Contract Image %s", img)
                 new_uri = self.process_contract_image(img)
                 msg['Contract']['item_images'] = new_uri
         else:
@@ -289,8 +288,8 @@ class Market(object):
 
         self.db.updateEntries(
             "settings",
-            {'market_id': self.transport.market_id},
-            self.settings
+            self.settings,
+            {'market_id': self.transport.market_id}
         )
 
     def _decode_list(self, data):
@@ -344,8 +343,8 @@ class Market(object):
 
         self.db.updateEntries(
             "settings",
-            {'market_id': self.transport.market_id},
-            self.settings
+            self.settings,
+            {'market_id': self.transport.market_id}
         )
 
     def republish_contracts(self):
@@ -379,8 +378,7 @@ class Market(object):
             for n in settings['notaries']:
                 peer = self.dht.routingTable.getContact(n.guid)
                 if peer is not None:
-                    t = Thread(target=peer.start_handshake)
-                    t.start()
+                    peer.start_handshake()
                     notaries.append(n)
             return notaries
         # End of untested code
@@ -412,20 +410,6 @@ class Market(object):
         # Updating the DHT index of your store's listings
         self.update_listings_index()
 
-        # If keywords store them in the keyword index
-        # keywords = msg['Contract']['item_keywords']
-        # self.log.info('Keywords: %s' % keywords)
-        # for keyword in keywords:
-        #
-        #     hash_value = hashlib.new('ripemd160')
-        #     hash_value.update('keyword-%s' % keyword)
-        #     keyword_key = hash_value.hexdigest()
-        #
-        #     self.transport.store(
-        #         keyword_key,
-        #         json.dumps({'keyword_index_add': contract_key}),
-        #         self.transport.guid)
-
     def update_listings_index(self):
         """This method is responsible for updating the DHT index of your
            store's listings. There is a dictionary in the DHT that has an
@@ -454,18 +438,26 @@ class Market(object):
         # Sign listing index for validation and tamper resistance
         data_string = str({'guid': self.transport.guid,
                            'contracts': my_contracts})
-        signature = makePrivCryptor(
-            self.transport.settings['secret']).sign(data_string).encode('hex')
+        cryptor = Cryptor(privkey_hex=self.transport.settings['secret'])
+        signature = cryptor.sign(data_string)
 
-        value = {'signature': signature,
-                 'data': {'guid': self.transport.guid,
-                          'contracts': my_contracts}}
+        value = {
+            'signature': signature.encode('hex'),
+            'data': {
+                'guid': self.transport.guid,
+                'contracts': my_contracts
+            }
+        }
 
         # Pass off to thread to keep GUI snappy
-        t = Thread(target=self.transport.store,
-                   args=(contract_index_key,
-                         value,
-                         self.transport.guid))
+        t = Thread(
+            target=self.transport.store,
+            args=(
+                contract_index_key,
+                value,
+                self.transport.guid,
+                )
+            )
         t.start()
 
     def remove_contract(self, msg):
@@ -477,8 +469,9 @@ class Market(object):
 
         self.db.updateEntries(
             "contracts",
-            {"id": msg["contract_id"]},
-            {"deleted": 1})
+            {"deleted": 1},
+            {"id": msg["contract_id"]}
+        )
         # Updating the DHT index of your store's listings
         self.update_listings_index()
 
@@ -618,12 +611,12 @@ class Market(object):
         self.log.info("Undo remove contract: %s", contract_id)
         self.db.updateEntries(
             "contracts",
-            {"market_id": self.transport.market_id.replace("'", "''"), "id": contract_id},
-            {"deleted": "0"})
+            {"deleted": "0"},
+            {"market_id": self.transport.market_id.replace("'", "''"), "id": contract_id}
+        )
 
     def save_settings(self, msg):
         """Update local settings"""
-        # self.log.debug("Settings to save %s", msg)
 
         # Check for any updates to arbiter or notary status to push to the DHT
         if 'notary' in msg:
@@ -652,8 +645,9 @@ class Market(object):
         # Update local settings
         self.db.updateEntries(
             "settings",
-            {'market_id': self.transport.market_id},
-            msg)
+            msg,
+            {'market_id': self.transport.market_id}
+        )
 
     def get_settings(self):
         """Get local settings"""
@@ -679,8 +673,6 @@ class Market(object):
 
         settings['btc_pubkey'] = privkey_to_pubkey(settings.get('privkey'))
         settings['secret'] = settings.get('secret')
-
-        # self.log.info("SETTINGS: %s", settings)
 
         if settings:
             return settings
@@ -717,8 +709,7 @@ class Market(object):
 
         def send_page_query():
             """Send a request for the local identity page"""
-            t = Thread(target=new_peer.start_handshake)
-            t.start()
+            new_peer.start_handshake()
 
             new_peer.send(proto_page(
                 self.transport.uri,
@@ -735,8 +726,7 @@ class Market(object):
                 settings.get('arbiterDescription', ''),
                 self.transport.sin))
 
-        t = Thread(target=send_page_query)
-        t.start()
+        send_page_query()
 
     def validate_on_query_myorders(self, *data):
         self.log.debug('Validating on query myorders message.')
